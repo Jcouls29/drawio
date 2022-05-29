@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "outDir": "dist",
+    "target": "ESNext",
+    
+    "strict": true,
+    "allowJs": true,
+    "checkJs": false,
+    "noImplicitAny": true,
+    "removeComments": true,
+
+    "resolveJsonModule": true,
+
+    "sourceMap": true,
+    "declaration": true,
+    "declarationDir": "dist/types",
+    "declarationMap": true,
+    "paths": {
+      "@/*": ["./src/modern/*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "**/*.spec.ts", "assets"]
+}

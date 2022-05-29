@@ -1,0 +1,20 @@
+{
+  "name": "sparcpoint.architect",
+  "version": "0.1",
+  "description": "SparcArchitect",
+  "main": "main.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "author": "Sparcpoint, LLC",
+  "license": "",
+  "dependencies": {
+    "commander": "^8.2.0",
+    "compression": "^1.7.4",
+    "crc": "^3.8.0",
+    "pdf-lib": "^1.16.0"
+  },
+  "devDependencies": {
+    "typescript": "^4.7.2"
+  }
+}
