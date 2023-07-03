@@ -1,9 +1,13 @@
 /**
  * Copyright (c) 2006-2016, JGraph Ltd
  */
+// Disables theme in viewer and lightbox
+Editor.currentTheme = '';
+window.uiTheme = '';
+
 /**
  * No CSS and resources available in embed mode. Parameters and docs:
- * https://www.diagrams.net/doc/faq/embed-html-options
+ * https://www.drawio.com/doc/faq/embed-html-options
  */
 GraphViewer = function(container, xmlNode, graphConfig)
 {
@@ -21,7 +25,7 @@ GraphViewer.prototype.editBlankUrl = 'https://app.diagrams.net/';
 /**
  * Base URL for relative images.
  */
-GraphViewer.prototype.imageBaseUrl = 'https://viewer.diagrams.net/';
+GraphViewer.prototype.imageBaseUrl = window.DRAWIO_BASE_URL + '/';
 
 /**
  * Redirects editing to absolue URLs.
@@ -113,6 +117,10 @@ GraphViewer.prototype.minWidth = 100;
 GraphViewer.prototype.responsive = false;
 
 /**
+ * Dark mode
+ */
+GraphViewer.prototype.darkMode = false;
+/**
  * Initializes the viewer.
  */
 GraphViewer.prototype.init = function(container, xmlNode, graphConfig)
@@ -134,6 +142,8 @@ GraphViewer.prototype.init = function(container, xmlNode, graphConfig)
 		this.graphConfig['center'] : (this.center || this.forceCenter);
 	this.checkVisibleState = (this.graphConfig['check-visible-state'] != null) ?
 		this.graphConfig['check-visible-state'] : this.checkVisibleState;
+	this.darkMode = (this.graphConfig['dark-mode'] != null) ?
+		this.graphConfig['dark-mode'] : this.darkMode;
 	this.toolbarItems = (this.graphConfig.toolbar != null) ?
 		this.graphConfig.toolbar.split(' ') : [];
 	this.zoomEnabled = mxUtils.indexOf(this.toolbarItems, 'zoom') >= 0;
@@ -141,6 +151,7 @@ GraphViewer.prototype.init = function(container, xmlNode, graphConfig)
 	this.tagsEnabled = mxUtils.indexOf(this.toolbarItems, 'tags') >= 0;
 	this.lightboxEnabled = mxUtils.indexOf(this.toolbarItems, 'lightbox') >= 0;
 	this.lightboxClickEnabled = this.graphConfig.lightbox != false;
+	this.initialOverflow = document.body.style.overflow;
 	this.initialWidth = (container != null) ? container.style.width : null;
 	this.widthIsEmpty = (this.initialWidth != null) ? this.initialWidth == '' : true;
 	this.currentPage = parseInt(this.graphConfig.page) || 0;
@@ -150,7 +161,7 @@ GraphViewer.prototype.init = function(container, xmlNode, graphConfig)
 	this.pageId = this.graphConfig.pageId;
 	this.editor = null;
 	var self = this;
-				
+	
 	if (this.graphConfig['toolbar-position'] == 'inline')
 	{
 		this.minHeight += this.toolbarHeight;
@@ -167,8 +178,15 @@ GraphViewer.prototype.init = function(container, xmlNode, graphConfig)
 			var render = mxUtils.bind(this, function()
 			{
 				this.graph = new Graph(container);
+
+				if (this.darkMode)
+				{
+					EditorUi.setGraphDarkMode(this.graph, null, true);
+				}
+
 				this.graph.enableFlowAnimation = true;
 				this.graph.defaultPageBackgroundColor = 'transparent';
+				this.graph.diagramBackgroundColor = 'transparent';
 				this.graph.transparentBackground = false;
 				
 				if (this.responsive && this.graph.dialect == mxConstants.DIALECT_SVG)
@@ -475,18 +493,25 @@ GraphViewer.prototype.init = function(container, xmlNode, graphConfig)
 				
 				this.graph.customLinkClicked = function(href)
 				{
-					if (Graph.isPageLink(href))
+					try
 					{
-						var comma = href.indexOf(',');
-						
-						if (!self.selectPageById(href.substring(comma + 1)))
+						if (Graph.isPageLink(href))
 						{
-							alert(mxResources.get('pageNotFound') || 'Page not found');
+							var comma = href.indexOf(',');
+							
+							if (!self.selectPageById(href.substring(comma + 1)))
+							{
+								alert(mxResources.get('pageNotFound') || 'Page not found');
+							}
+						}
+						else
+						{
+							this.handleCustomLink(href);
 						}
 					}
-					else
+					catch (e)
 					{
-						this.handleCustomLink(href);
+						alert(e.message);
 					}
 					
 					return true;
@@ -873,7 +898,6 @@ GraphViewer.prototype.addSizeHandler = function()
 		}
 	});
 
-	// Fallback for older browsers
 	if (GraphViewer.useResizeSensor)
 	{
 		if (document.documentMode <= 9)
@@ -921,7 +945,6 @@ GraphViewer.prototype.addSizeHandler = function()
 				}
 			});
 			
-			// Fallback for older browsers
 			if (GraphViewer.useResizeSensor)
 			{
 				if (document.documentMode <= 9)
@@ -1123,7 +1146,6 @@ GraphViewer.prototype.showLayers = function(graph, sourceGraph)
 GraphViewer.prototype.addToolbar = function()
 {
 	var container = this.graph.container;
-	var initialCursor = this.graph.container.style.cursor;
 	
 	if (this.graphConfig['toolbar-position'] == 'bottom')
 	{
@@ -1144,6 +1166,12 @@ GraphViewer.prototype.addToolbar = function()
 	toolbar.style.zIndex = this.toolbarZIndex;
 	toolbar.style.backgroundColor = '#eee';
 	toolbar.style.height = this.toolbarHeight + 'px';
+
+	if (this.darkMode)
+	{
+		toolbar.style.filter = 'invert(1)';
+	}
+
 	this.toolbar = toolbar;
 	
 	if (this.graphConfig['toolbar-position'] == 'inline')
@@ -1277,51 +1305,15 @@ GraphViewer.prototype.addToolbar = function()
 	var tokens = this.toolbarItems;
 	var buttonCount = 0;
 	
-	function addButton(fn, imgSrc, tip, enabled)
+	var addButton = mxUtils.bind(this, function(fn, imgSrc, tip, enabled)
 	{
-		var a = document.createElement('div');
-		a.style.borderRight = '1px solid #d0d0d0';
-		a.style.padding = '3px 6px 3px 6px';
-		mxEvent.addListener(a, 'click', fn);
-
-		if (tip != null)
-		{
-			a.setAttribute('title', tip);
-		}
-		
-		a.style.display = 'inline-block';
-		var img = document.createElement('img');
-		img.setAttribute('border', '0');
-		img.setAttribute('src', imgSrc);
-		img.style.width = '18px';
-
-		if (enabled == null || enabled)
-		{
-			mxEvent.addListener(a, 'mouseenter', function()
-			{
-				a.style.backgroundColor = '#ddd';
-			});
-			
-			mxEvent.addListener(a, 'mouseleave', function()
-			{
-				a.style.backgroundColor = '#eee';
-			});
-
-			mxUtils.setOpacity(img, 60);
-			a.style.cursor = 'pointer';
-		}
-		else
-		{
-			mxUtils.setOpacity(a, 30);
-		}
-		
-		a.appendChild(img);
+		var a = this.createToolbarButton(fn, imgSrc, tip, enabled);
 		toolbar.appendChild(a);
 		
 		buttonCount++;
 		
 		return a;
-	};
+	});
 
 	var layersDialog = null;
 	var tagsComponent = null;
@@ -1336,7 +1328,7 @@ GraphViewer.prototype.addToolbar = function()
 		{
 			pageInfo = container.ownerDocument.createElement('div');
 			pageInfo.style.cssText = 'display:inline-block;position:relative;top:5px;padding:0 4px 0 4px;' +
-				'vertical-align:top;font-family:Helvetica,Arial;font-size:12px;;cursor:default;'
+				'vertical-align:top;font-family:Helvetica,Arial;font-size:12px;;cursor:default;color:#000;'
 			mxUtils.setOpacity(pageInfo, 70);
 			
 			var prevButton = addButton(mxUtils.bind(this, function()
@@ -1361,7 +1353,7 @@ GraphViewer.prototype.addToolbar = function()
 			
 			var update = mxUtils.bind(this, function()
 			{
-				pageInfo.innerHTML = '';
+				pageInfo.innerText = '';
 				mxUtils.write(pageInfo, (this.currentPage + 1) + ' / ' + this.diagrams.length);
 				pageInfo.style.display = (this.diagrams.length > 1) ? 'inline-block' : 'none';
 				prevButton.style.display = pageInfo.style.display;
@@ -1463,11 +1455,17 @@ GraphViewer.prototype.addToolbar = function()
 						layersDialog.style.overflowY = 'auto';
 						layersDialog.style.maxHeight = (this.graph.container.clientHeight - this.toolbarHeight - 10) + 'px'
 						layersDialog.style.zIndex = this.toolbarZIndex + 1;
+						layersDialog.style.color = '#000';
 						mxUtils.setOpacity(layersDialog, 80);
 						var origin = mxUtils.getDocumentScrollOrigin(document);
 						layersDialog.style.left = origin.x + r.left - 1 + 'px';
 						layersDialog.style.top = origin.y + r.bottom - 2 + 'px';
 						
+						if (this.darkMode)
+						{
+							layersDialog.style.filter = 'invert(1)';
+						}
+
 						document.body.appendChild(layersDialog);
 					}
 				}), Editor.layersImage, mxResources.get('layers') || 'Layers');
@@ -1506,6 +1504,12 @@ GraphViewer.prototype.addToolbar = function()
 						tagsComponent.div.style.color = '#000';
 						tagsComponent.div.style.border = '1px solid #d0d0d0';
 						tagsComponent.div.style.zIndex = this.toolbarZIndex + 1;
+
+						if (this.darkMode)
+						{
+							tagsComponent.div.style.filter = 'invert(1)';
+						}
+
 						mxUtils.setOpacity(tagsComponent.div, 80);
 					}
 
@@ -1520,8 +1524,11 @@ GraphViewer.prototype.addToolbar = function()
 						
 						mxEvent.addListener(tagsDialog, 'mouseleave', function()
 						{
-							tagsDialog.parentNode.removeChild(tagsDialog);
-							tagsDialog = null;
+							if (tagsDialog != null)
+							{
+								tagsDialog.parentNode.removeChild(tagsDialog);
+								tagsDialog = null;
+							}
 						});
 						
 						var r = tagsButton.getBoundingClientRect();
@@ -1572,7 +1579,7 @@ GraphViewer.prototype.addToolbar = function()
 	{
 		var filename = container.ownerDocument.createElement('div');
 		filename.style.cssText = 'display:inline-block;position:relative;padding:3px 6px 0 6px;' +
-			'vertical-align:top;font-family:Helvetica,Arial;font-size:12px;top:4px;cursor:default;'
+			'vertical-align:top;font-family:Helvetica,Arial;font-size:12px;top:4px;cursor:default;color:#000;';
 		filename.setAttribute('title', this.graphConfig.title);
 		mxUtils.write(filename, this.graphConfig.title);
 		mxUtils.setOpacity(filename, 70);
@@ -1621,7 +1628,7 @@ GraphViewer.prototype.addToolbar = function()
 			
 			if (prevBorder == '1px solid transparent')
 			{
-				container.style.border = '1px solid #d0d0d0';
+				container.style.border = '1px solid ' + (this.darkMode? '#3d3d3d' : '#d0d0d0');
 			}
 			
 			document.body.appendChild(toolbar);
@@ -1690,6 +1697,53 @@ GraphViewer.prototype.addToolbar = function()
 			}
 		}).observe(container)
 	}
+};
+
+/**
+ * 
+ */
+GraphViewer.prototype.createToolbarButton = function(fn, imgSrc, tip, enabled)
+{
+	var a = document.createElement('div');
+	a.style.borderRight = '1px solid #d0d0d0';
+	a.style.padding = '3px 6px 3px 6px';
+	
+	mxEvent.addListener(a, 'click', fn);
+
+	if (tip != null)
+	{
+		a.setAttribute('title', tip);
+	}
+	
+	a.style.display = 'inline-block';
+	var img = document.createElement('img');
+	img.setAttribute('border', '0');
+	img.setAttribute('src', imgSrc);
+	img.style.width = '18px';
+
+	if (enabled == null || enabled)
+	{
+		mxEvent.addListener(a, 'mouseenter', function()
+		{
+			a.style.backgroundColor = '#ddd';
+		});
+		
+		mxEvent.addListener(a, 'mouseleave', function()
+		{
+			a.style.backgroundColor = '#eee';
+		});
+
+		mxUtils.setOpacity(img, 60);
+		a.style.cursor = 'pointer';
+	}
+	else
+	{
+		mxUtils.setOpacity(a, 30);
+	}
+	
+	a.appendChild(img);
+
+	return a;
 };
 
 GraphViewer.prototype.disableButton = function(token)
@@ -1862,14 +1916,13 @@ GraphViewer.prototype.showLightbox = function(editable, closable, target)
 /**
  * Adds the given array of stencils to avoid dynamic loading of shapes.
  */
-GraphViewer.prototype.showLocalLightbox = function()
+GraphViewer.prototype.showLocalLightbox = function(container)
 {
-	var origin = mxUtils.getDocumentScrollOrigin(document);
 	var backdrop = document.createElement('div');
 
 	backdrop.style.cssText = 'position:fixed;top:0;left:0;bottom:0;right:0;';
 	backdrop.style.zIndex = this.lightboxZIndex;
-	backdrop.style.backgroundColor = '#000000';
+	backdrop.style.backgroundColor = this.darkMode? '#fff' : '#000000';
 	mxUtils.setOpacity(backdrop, 70);
 	
 	document.body.appendChild(backdrop);
@@ -1879,6 +1932,11 @@ GraphViewer.prototype.showLocalLightbox = function()
 	closeImg.setAttribute('src', Editor.closeBlackImage);
 	closeImg.style.cssText = 'position:fixed;top:32px;right:32px;';
 	closeImg.style.cursor = 'pointer';
+
+	if (this.darkMode)
+	{
+		closeImg.style.filter = 'invert(1)';
+	}
 	
 	mxEvent.addListener(closeImg, 'click', function()
 	{
@@ -1899,6 +1957,17 @@ GraphViewer.prototype.showLocalLightbox = function()
 		urlParams['tags'] = '{}';
 	}
 
+	if (container != null)
+	{
+		try
+		{
+			var toolbarConfig = JSON.parse(decodeURIComponent(urlParams['toolbar-config'] || '{}'));
+			toolbarConfig.noCloseBtn = true;
+			urlParams['toolbar-config'] = encodeURIComponent(JSON.stringify(toolbarConfig));
+		}
+		catch (e) {}
+	}
+
 	// PostMessage not working and Permission denied for opened access in IE9-
 	if (document.documentMode == null || document.documentMode >= 10)
 	{
@@ -1906,6 +1975,11 @@ GraphViewer.prototype.showLocalLightbox = function()
 		Editor.prototype.editButtonFunc = this.graphConfig.editFunc;
 	}
 	
+	Editor.isDarkMode = mxUtils.bind(this, function()
+	{	
+		return this.darkMode;
+	});
+
 	EditorUi.prototype.updateActionStates = function() {};
 	EditorUi.prototype.addBeforeUnloadListener = function() {};
 	EditorUi.prototype.addChromelessClickHandler = function() {};
@@ -1916,6 +1990,12 @@ GraphViewer.prototype.showLocalLightbox = function()
 	Graph.prototype.shadowId = 'lightboxDropShadow';
 	
 	var ui = new EditorUi(new Editor(true), document.createElement('div'), true);
+
+	if (this.darkMode)
+	{
+		ui.setDarkMode(true);
+	}
+
 	ui.editor.editBlankUrl = this.editBlankUrl;
 	
 	// Overrides instance variable and restores prototype state
@@ -1934,23 +2014,28 @@ GraphViewer.prototype.showLocalLightbox = function()
 		}
 	});
 
+	var overflow = this.initialOverflow;
 	var destroy = ui.destroy;
+	
 	ui.destroy = function()
 	{
-		mxEvent.removeListener(document.documentElement, 'keydown', keydownHandler);
-		document.body.removeChild(backdrop);
-		document.body.removeChild(closeImg);
-		document.body.style.overflow = 'auto';
-		GraphViewer.resizeSensorEnabled = true;
-		
-		destroy.apply(this, arguments);
+		if (container == null)
+		{
+			mxEvent.removeListener(document.documentElement, 'keydown', keydownHandler);
+			document.body.removeChild(backdrop);
+			document.body.removeChild(closeImg);
+			document.body.style.overflow = overflow;
+			GraphViewer.resizeSensorEnabled = true;
+			
+			destroy.apply(this, arguments);
+		}
 	};
 	
 	var graph = ui.editor.graph;
 	var lightbox = graph.container;
 	lightbox.style.overflow = 'hidden';
 	
-	if (this.lightboxChrome)
+	if (this.lightboxChrome && container == null)
 	{
 		lightbox.style.border = '1px solid #c0c0c0';
 		lightbox.style.margin = '40px';
@@ -2000,54 +2085,78 @@ GraphViewer.prototype.showLocalLightbox = function()
 	
 	GraphViewer.resizeSensorEnabled = false;
 	document.body.style.overflow = 'hidden';
-
-	// Workaround for possible rendering issues
-	if (!mxClient.IS_SF && !mxClient.IS_EDGE)
-	{
-		mxUtils.setPrefixedStyle(lightbox.style, 'transform', 'rotateY(90deg)');
-		mxUtils.setPrefixedStyle(lightbox.style, 'transition', 'all .25s ease-in-out');
-	}
-	
 	this.addClickHandler(graph, ui);
 
 	window.setTimeout(mxUtils.bind(this, function()
 	{
-		// Disables focus border in Chrome
-		lightbox.style.outline = 'none';
-		lightbox.style.zIndex = this.lightboxZIndex;
-		closeImg.style.zIndex = this.lightboxZIndex;
-
-		document.body.appendChild(lightbox);
-		document.body.appendChild(closeImg);
-		
-		ui.setFileData(this.xml);
-
-		mxUtils.setPrefixedStyle(lightbox.style, 'transform', 'rotateY(0deg)');
-		ui.chromelessToolbar.style.bottom = 60 + 'px';
-		ui.chromelessToolbar.style.zIndex = this.lightboxZIndex;
-		
-		// Workaround for clipping in IE11-
-		document.body.appendChild(ui.chromelessToolbar);
-	
-		ui.getEditBlankXml = mxUtils.bind(this, function()
+		try
 		{
-			return this.xml;
-		});
-	
-		ui.lightboxFit();
-		ui.chromelessResize();
-		this.showLayers(graph, this.graph);
+			// Click on backdrop closes lightbox
+			mxEvent.addListener(backdrop, 'click', function()
+			{
+				ui.destroy();
+			});
+
+			// Disables focus border in Chrome
+			lightbox.style.outline = 'none';
+			lightbox.style.zIndex = this.lightboxZIndex;
+			closeImg.style.zIndex = this.lightboxZIndex;
+
+			if (container != null)
+			{
+				container.innerHTML = '';
+				container.appendChild(lightbox);
+			}
+			else
+			{
+				document.body.appendChild(lightbox);
+				document.body.appendChild(closeImg);
+			}
+			
+			ui.setFileData(this.xml);
+			
+			mxUtils.setPrefixedStyle(lightbox.style, 'transform', 'rotateY(0deg)');
+			ui.chromelessToolbar.style.bottom = 60 + 'px';
+			ui.chromelessToolbar.style.zIndex = this.lightboxZIndex;
+			
+			// Workaround for clipping in IE11-
+			(container || document.body).appendChild(ui.chromelessToolbar);
 		
-		// Click on backdrop closes lightbox
-		mxEvent.addListener(backdrop, 'click', function()
+			ui.getEditBlankXml = mxUtils.bind(this, function()
+			{
+				return this.xml;
+			});
+		
+			ui.lightboxFit();
+			ui.chromelessResize();
+			this.showLayers(graph, this.graph);
+		}
+		catch (e)
 		{
-			ui.destroy();
-		});
+			ui.handleError(e, null, function()
+			{
+				ui.destroy();
+			});
+		}
 	}), 0);
 
 	return ui;
 };
 
+/**
+ * Removes the dialog from the DOM.
+ */
+Dialog.prototype.getDocumentSize = function()
+{
+	var vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0)
+	var vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0)
+
+	return new mxRectangle(0, 0, vw, vh);
+};
+
+/**
+ * 
+ */
 GraphViewer.prototype.updateTitle = function(title)
 {
 	title = title || '';
@@ -2059,7 +2168,7 @@ GraphViewer.prototype.updateTitle = function(title)
 	
 	if (this.filename != null)
 	{
-		this.filename.innerHTML = '';
+		this.filename.innerText = '';
 		mxUtils.write(this.filename, title);
 		this.filename.setAttribute('title', title);
 	}
@@ -2074,12 +2183,12 @@ GraphViewer.processElements = function(classname)
 	{
 		try
 		{
-			div.innerHTML = '';
+			div.innerText = '';
 			GraphViewer.createViewerForElement(div);
 		}
 		catch (e)
 		{
-			div.innerHTML = e.message;
+			div.innerText = e.message;
 			
 			if (window.console != null)
 			{
@@ -2168,6 +2277,47 @@ GraphViewer.createViewerForElement = function(element, callback)
 	}
 };
 
+GraphViewer.logAncestorFrames = function()
+{
+	try
+	{
+		if (window.location.ancestorOrigins && window.location.hostname &&
+				window.location.ancestorOrigins.length && window.location.ancestorOrigins.length > 0)
+		{
+			var hostname = window.location.hostname;
+
+			if (hostname && hostname.length > 1 && hostname.charAt(hostname.length - 1) == '/')
+			{
+				hostname = hostname.substring(0, hostname.length - 1)
+			}
+
+			var message = '';
+
+			for (var i = 0; i < window.location.ancestorOrigins.length; i++)
+			{
+				message += ' -> ' + window.location.ancestorOrigins[i];
+			}
+
+			if (hostname.endsWith('.draw.io') && window.location.ancestorOrigins.length == 1 &&
+					window.location.ancestorOrigins[0] && window.location.ancestorOrigins[0].endsWith('.atlassian.net'))
+			{
+				// do not log *.draw.io domains embedded directly into atlassian.net
+			}
+			else if (window.location.ancestorOrigins.length > 0)
+			{
+				var img = new Image();
+				img.src = 'https://log.diagrams.net/images/1x1.png?src=ViewerAncestorFrames' +
+					((typeof window.EditorUi !== 'undefined') ? '&v=' + encodeURIComponent(EditorUi.VERSION) : '') +
+					'&data=' + encodeURIComponent(message);
+			}
+		}
+	}
+	catch (e)
+	{
+		// ignore
+	}
+};
+
 /**
  * Adds event if grid size is changed.
  */
@@ -2235,7 +2385,7 @@ GraphViewer.initCss = function()
 			'height:1px;}',
 			'table.mxPopupMenu tr {	font-size:4pt;}',
 			// Modified to only apply to the print dialog
-			'.geDialog { font-family:Helvetica Neue,Helvetica,Arial Unicode MS,Arial;',
+			'.geDialog, .geDialog table { font-family:Helvetica Neue,Helvetica,Arial Unicode MS,Arial;',
 			'font-size:10pt;',
 			'border:none;',
 			'margin:0px;}',
@@ -2243,6 +2393,9 @@ GraphViewer.initCss = function()
 			'.geDialog {	position:absolute;	background:white;	overflow:hidden;	padding:30px;	border:1px solid #acacac;	-webkit-box-shadow:0px 0px 2px 2px #d5d5d5;	-moz-box-shadow:0px 0px 2px 2px #d5d5d5;	box-shadow:0px 0px 2px 2px #d5d5d5;	_filter:progid:DXImageTransform.Microsoft.DropShadow(OffX=2, OffY=2, Color=\'#d5d5d5\', Positive=\'true\');	z-index: 2;}.geDialogClose {	position:absolute;	width:9px;	height:9px;	opacity:0.5;	cursor:pointer;	_filter:alpha(opacity=50);}.geDialogClose:hover {	opacity:1;}.geDialogTitle {	box-sizing:border-box;	white-space:nowrap;	background:rgb(229, 229, 229);	border-bottom:1px solid rgb(192, 192, 192);	font-size:15px;	font-weight:bold;	text-align:center;	color:rgb(35, 86, 149);}.geDialogFooter {	background:whiteSmoke;	white-space:nowrap;	text-align:right;	box-sizing:border-box;	border-top:1px solid #e5e5e5;	color:darkGray;}',
 			'.geBtn {	background-color: #f5f5f5;	border-radius: 2px;	border: 1px solid #d8d8d8;	color: #333;	cursor: default;	font-size: 11px;	font-weight: bold;	height: 29px;	line-height: 27px;	margin: 0 0 0 8px;	min-width: 72px;	outline: 0;	padding: 0 8px;	cursor: pointer;}.geBtn:hover, .geBtn:focus {	-webkit-box-shadow: 0px 1px 1px rgba(0,0,0,0.1);	-moz-box-shadow: 0px 1px 1px rgba(0,0,0,0.1);	box-shadow: 0px 1px 1px rgba(0,0,0,0.1);	border: 1px solid #c6c6c6;	background-color: #f8f8f8;	background-image: linear-gradient(#f8f8f8 0px,#f1f1f1 100%);	color: #111;}.geBtn:disabled {	opacity: .5;}.gePrimaryBtn {	background-color: #4d90fe;	background-image: linear-gradient(#4d90fe 0px,#4787ed 100%);	border: 1px solid #3079ed;	color: #fff;}.gePrimaryBtn:hover, .gePrimaryBtn:focus {	background-color: #357ae8;	background-image: linear-gradient(#4d90fe 0px,#357ae8 100%);	border: 1px solid #2f5bb7;	color: #fff;}.gePrimaryBtn:disabled {	opacity: .5;}'].join('\n');
 		document.getElementsByTagName('head')[0].appendChild(style);
+
+		// Log the ansestor frames
+		GraphViewer.logAncestorFrames();
 	}
 	catch (e)
 	{
@@ -2286,6 +2439,12 @@ GraphViewer.getUrl = function(url, onload, onerror)
 GraphViewer.resizeSensorEnabled = true;
 
 /**
+ * Specifies if ResizeObserver should be used instead of ResizeSensor.
+ * Default is true.
+ */
+GraphViewer.useResizeObserver = true;
+
+/**
  * Redirects editing to absolue URLs.
  */
 GraphViewer.useResizeSensor = true;
@@ -2324,6 +2483,34 @@ GraphViewer.useResizeSensor = true;
     			fn();
     		}
     	};
+
+		// Uses ResizeObserver, if available
+		if (GraphViewer.useResizeObserver && typeof ResizeObserver !== 'undefined')
+		{
+			var callbackThread = null;
+			var active = false;
+
+			new ResizeObserver(function()
+			{
+				if (!active)
+				{
+					if (callbackThread != null)
+					{
+						window.clearTimeout(callbackThread);
+					}
+
+					callbackThread = window.setTimeout(function()
+					{
+						active = true;
+						callback();
+						callbackThread = null;
+						active = false;
+					}, 200);
+				}
+			}).observe(element)
+
+			return
+		}
     	
         /**
          *

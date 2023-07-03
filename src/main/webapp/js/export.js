@@ -1,13 +1,133 @@
 var mxIsElectron = navigator.userAgent != null &&
-	navigator.userAgent.toLowerCase().indexOf(' electron/') > -1;
+	navigator.userAgent.toLowerCase().indexOf(' electron/') > -1 && 
+	navigator.userAgent.indexOf(' draw.io/') > -1;
 var GOOGLE_APPS_MAX_AREA = 25000000;
 var GOOGLE_SHEET_MAX_AREA = 1048576; //1024x1024
 
+/**
+ * Adds meta tag to the page.
+ */
+function mxmeta(content, httpEquiv)
+{
+	try
+	{
+		var s = document.createElement('meta');
+		
+		s.setAttribute('content', content);
+		s.setAttribute('http-equiv', httpEquiv);
+
+		var t = document.getElementsByTagName('meta')[0];
+		t.parentNode.insertBefore(s, t);
+	}
+	catch (e)
+	{
+		// ignore
+	}
+};
+
+function mxscript(src, onLoad)
+{
+	var s = document.createElement('script');
+	s.setAttribute('type', 'text/javascript');
+	s.setAttribute('src', src);
+	
+	if (onLoad != null)
+	{
+		var r = false;
+	
+		s.onload = s.onreadystatechange = function()
+		{
+			if (!r && (!this.readyState || this.readyState == 'complete'))
+			{
+				r = true;
+				onLoad();
+			}
+		};
+	}
+
+	var t = document.getElementsByTagName('script')[0];
+	
+	if (t != null)
+	{
+		t.parentNode.insertBefore(s, t);
+	}
+};
+
+if (mxIsElectron)
+{
+	mxmeta('default-src \'self\'; script-src \'self\'; connect-src \'self\' https://*.draw.io https://*.diagrams.net https://fonts.googleapis.com https://fonts.gstatic.com; img-src * data:; media-src *; font-src *; frame-src \'none\'; style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com; base-uri \'none\';child-src \'self\';object-src \'none\';', 'Content-Security-Policy');
+	
+	// We can't use eval in Electron because of CSP, so load all shapes and disable eval
+	mxscript('js/stencils.min.js', function()
+	{
+		mxscript('js/shapes-14-6-5.min.js', function()
+		{
+			if (window.pendingRequest != null)
+			{
+				render(window.pendingRequest);
+			}
+
+			window.shapesLoaded = true;
+		});
+	});
+	
+	// Disables eval for JS (uses shapes-14-6-5.min.js)
+	mxStencilRegistry.allowEval = false;
+}
 //TODO Add support for loading math from a local folder
-Editor.initMath((remoteMath? 'https://app.diagrams.net/' : '') + 'math/MathJax.js');
+Editor.initMath((remoteMath? 'https://app.diagrams.net/' : '') + 'math/es5/startup.js');
 
 function render(data)
 {
+	if (data.csv != null)
+	{
+		// CSV loads orgChart asynchronously and needs mxscript
+		window.mxscript = function (src, onLoad, id)
+		{
+			var s = document.createElement('script');
+			s.setAttribute('type', 'text/javascript');
+			s.setAttribute('defer', 'true');
+			s.setAttribute('src', src);
+
+			if (id != null)
+			{
+				s.setAttribute('id', id);
+			}
+			
+			if (onLoad != null)
+			{
+				var r = false;
+			
+				s.onload = s.onreadystatechange = function()
+				{
+					if (!r && (!this.readyState || this.readyState == 'complete'))
+					{
+						r = true;
+						onLoad();
+					}
+				};
+			}
+			
+			var t = document.getElementsByTagName('script')[0];
+			
+			if (t != null)
+			{
+				t.parentNode.insertBefore(s, t);
+			}
+		};
+
+		var editorUi = new HeadlessEditorUi();
+		
+		editorUi.importCsv(data.csv, function()
+		{
+			data.xml = mxUtils.getXml(editorUi.editor.getGraphXml());
+			delete data.csv;
+			render(data);
+		});
+
+		return;
+	}
+
 	var autoScale = false;
 	
 	if (data.scale == 'auto')
@@ -16,7 +136,7 @@ function render(data)
 		data.scale = 1;
 	}
 	
-	document.body.innerHTML = '';
+	document.body.innerText = '';
 	var container = document.createElement('div');
 	container.id = 'graph';
 	container.style.width = '100%';
@@ -101,10 +221,7 @@ function render(data)
 	function getFileXml(uncompressed)
 	{
 		var xml = mxUtils.getXml(origXmlDoc);
-		EditorUi.prototype.createUi = function(){};
-		EditorUi.prototype.addTrees = function(){};
-		EditorUi.prototype.updateActionStates = function(){};
-		var editorUi = new EditorUi();
+		var editorUi = new HeadlessEditorUi();
 		var tmpFile = new LocalFile(editorUi, xml);
 		editorUi.setCurrentFile(tmpFile);
 		editorUi.setFileData(xml);
@@ -138,6 +255,14 @@ function render(data)
 	}
 
 	/**
+	 * Disables custom links but allows page links.
+	 */
+	function isLinkIgnored(graph, link)
+	{
+		return link == null || (graph.isCustomLink(link) && !Graph.isPageLink(link));
+	};
+
+	/**
 	 * Disables custom links on shapes.
 	 */
 	var graphGetLinkForCell = graph.getLinkForCell;
@@ -145,8 +270,8 @@ function render(data)
 	graph.getLinkForCell = function(cell)
 	{
 		var link = graphGetLinkForCell.apply(this, arguments);
-		
-		if (link != null && this.isCustomLink(link))
+
+		if (isLinkIgnored(this, link))
 		{
 			link = null;
 		}
@@ -171,7 +296,7 @@ function render(data)
 			{
 				var href = links[i].getAttribute('href');
 				
-				if (href != null && graph.isCustomLink(href))
+				if (isLinkIgnored(graph, href))
 				{
 					links[i].setAttribute('href', '#');
 				}
@@ -197,6 +322,9 @@ function render(data)
 			//Ensure that all fonts has been loaded, this promise is never rejected
 			document.fonts.ready.then(function() 
 			{
+				// Rewrite page links
+				Graph.rewritePageLinks(document);
+				
 				var doneDiv = document.createElement("div");
 				var pageCount = diagrams != null? diagrams.length : 1;
 				doneDiv.id = 'LoadingComplete';
@@ -223,7 +351,7 @@ function render(data)
 								bg = null;
 							}
 							
-							var svgRoot = graph.getSvg(bg, 1, 0, false, null, true, null, null, null);
+							var svgRoot = graph.getSvg(bg, expScale, 0, false, null, true, null, null, null);
 							
 							if (graph.shadowVisible)
 							{
@@ -299,24 +427,16 @@ function render(data)
 		}
 	};
 	
-	// Waits for MathJax.Hub to become available to register
-	// wait counter callback asynchronously after math render
-	var editorDoMathJaxRender = Editor.doMathJaxRender;
+	// Waits for MathJax autoloading and rendering
+	var editorOnMathJaxDone = Editor.onMathJaxDone;
 	
-	Editor.doMathJaxRender = function(container)
+	Editor.onMathJaxDone = function()
 	{
-		editorDoMathJaxRender.apply(this, arguments);
-		
-		window.setTimeout(function()
-		{
-			window.MathJax.Hub.Queue(function ()
-			{
-				decrementWaitCounter();
-			});
-		}, 0);
+		editorOnMathJaxDone.apply(this, arguments);
+		decrementWaitCounter();
 	};
-	
-	// Adds async MathJax rendering task
+
+	// Adds MathJax rendering task
 	function renderMath(elt)
 	{
 		if (math && Editor.MathJaxRender != null)
@@ -426,7 +546,7 @@ function render(data)
 		return origAddFont.call(this, name, url, decrementWaitCounter);	
 	};
 		
-	function renderPage()
+	function renderPage(currentPageId)
 	{
 		// Enables math typesetting
 		math |= xmlDoc.documentElement.getAttribute('math') == '1';
@@ -757,6 +877,8 @@ function render(data)
 				x0 -= layout.x * pf.width;
 				y0 -= layout.y * pf.height;
 			}
+
+			var anchorId = (currentPageId != null) ? 'page/id,' + currentPageId : null;
 			
 			if (preview == null)
 			{
@@ -765,14 +887,14 @@ function render(data)
 				preview.autoOrigin = autoOrigin;
 				preview.backgroundColor = bg;
 				// Renders print output into this document and removes the graph container
-				preview.open(null, window);
+				preview.open(null, window, null, null, anchorId);
 				graph.container.parentNode.removeChild(graph.container);
 			}
 			else
 			{
 				preview.backgroundColor = bg;
 				preview.autoOrigin = autoOrigin; 
-				preview.appendGraph(graph, scale, x0, y0);
+				preview.appendGraph(graph, scale, x0, y0, null, null, anchorId);
 			}
 
 			// Adds shadow
@@ -886,7 +1008,7 @@ function render(data)
 			{
 				if (pageId == null)
 				{
-					pageId = diagrams[i].getAttribute('id')
+					pageId = diagrams[i].getAttribute('id');
 				}
 				
 				xmlDoc = Editor.parseDiagramNode(diagrams[i]);
@@ -898,7 +1020,7 @@ function render(data)
 
 				graph.getModel().clear();
 				from = i;
-				renderPage();
+				renderPage(diagrams[i].getAttribute('id'));
 			}
 		}
 	}
@@ -909,9 +1031,9 @@ function render(data)
 	
 	if (fallbackFont)
 	{
-		//Add a fallbackFont font to all labels in case the selected font doesn't support the character
-		//Some systems doesn't have a good fallback fomt that supports all languages
-		//Use this with a custom font-face in export-fonts.css file
+		// Add a fallbackFont font to all labels in case the selected font doesn't support the character
+		// Some systems doesn't have a good fallback fomt that supports all languages
+		// Use this with a custom font-face in export-fonts.css file
 		document.querySelectorAll('foreignObject div').forEach(d => d.style.fontFamily = (d.style.fontFamily || '') + ', ' + fallbackFont);
 	}
 	
@@ -935,7 +1057,14 @@ if (mxIsElectron)
 		{
 			try
 			{
-				render(arg);
+				if (window.shapesLoaded)
+				{
+					render(arg);
+				}
+				else
+				{
+					window.pendingRequest = arg;
+				}
 			}
 			catch(e)
 			{
